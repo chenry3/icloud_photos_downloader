@@ -20,10 +20,11 @@ from icloudpd import download
 from icloudpd.email_notifications import send_2sa_notification
 from icloudpd.string_helpers import truncate_middle
 from icloudpd.autodelete import autodelete_photos
-from icloudpd.paths import local_download_path
+from icloudpd.paths import local_download_path, local_download_path_lp
 from icloudpd import exif_datetime
 # Must import the constants object so that we can mock values in tests.
 from icloudpd import constants
+import icloudpd.state as state_lib
 
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 
@@ -121,7 +122,7 @@ CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
     "--folder-structure",
     help="Folder structure (default: {:%Y/%m/%d})",
     metavar="<folder_structure>",
-    default="{:%Y/%m/%d}",
+    default="{:%04Y/%m/%d}",
 )
 @click.option(
     "--set-exif-datetime",
@@ -183,6 +184,22 @@ CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
     "(Progress bar is disabled by default if there is no tty attached)",
     is_flag=True,
 )
+@click.option(
+    "--state-store",
+    help="Media state backend to use (defaults to files).\n"
+    "files: photo exists on filesystem\n"
+    "json: flat json file\n"
+    "sqlite: sqlite db",
+    type=click.Choice(["files", "json", "sqlite"]),
+    metavar="<state_backend>",
+    default="files",
+)
+@click.option(
+    "--state-path",
+    help="Path to state store (if applicable)",
+    metavar="<state_path>",
+    default=None,
+)
 @click.version_option()
 # pylint: disable-msg=too-many-arguments,too-many-statements
 # pylint: disable-msg=too-many-branches,too-many-locals
@@ -213,6 +230,8 @@ def main(
         log_level,
         no_progress_bar,
         notification_script,
+        state_store,
+        state_path,
 ):
     """Download all iCloud photos to a local directory"""
     logger = setup_logger()
@@ -270,6 +289,19 @@ def main(
         album_titles = [str(a) for a in albums]
         print(*album_titles, sep="\n")
         exit(0)
+
+    if state_store == "sqlite":
+        if state_path is None:
+            logger.tqdm_write("No state path supplied for sqlite")
+            exit(1)
+        statemgr = state_lib.SQLiteMediaManager(filepath=state_path)
+    elif state_store == "json":
+        if state_path is None:
+            logger.tqdm_write("No state path supplied for json state")
+            exit(1)
+        statemgr = state_lib.FileMediaManager(filepath=state_path)
+    else:
+        statemgr = state_lib.FilesMediaManager()
 
     # For Python 2.7
     if hasattr(directory, "decode"):
@@ -350,6 +382,7 @@ def main(
     # pylint: disable-msg=too-many-nested-blocks
     for photo in photos_enumerator:
         for _ in range(constants.MAX_RETRIES):
+            ### Process media skipping rules
             if skip_videos and photo.item_type != "image":
                 logger.set_tqdm_description(
                     "Skipping %s, only downloading photos." % photo.filename
@@ -361,6 +394,8 @@ def main(
                     "(Item type was: %s)" % (photo.filename, photo.item_type)
                 )
                 break
+
+            ### Process photo ctime
             try:
                 created_date = photo.created.astimezone(get_localzone())
             except (ValueError, OSError):
@@ -369,6 +404,7 @@ def main(
                     photo.created, logging.ERROR)
                 created_date = photo.created
 
+            # Process photo dir path schema
             try:
                 date_path = folder_structure.format(created_date)
             except ValueError:  # pragma: no cover
@@ -381,14 +417,12 @@ def main(
                 # Just use the Unix epoch
                 created_date = datetime.datetime.fromtimestamp(0)
                 date_path = folder_structure.format(created_date)
-
             download_dir = os.path.join(directory, date_path)
-
             if not os.path.exists(download_dir):
                 os.makedirs(download_dir)
 
+            ### process download size (user-defined vs available)
             download_size = size
-
             try:
                 versions = photo.versions
             except KeyError as ex:
@@ -414,6 +448,7 @@ def main(
                     "see what went wrong.\n")
                 break
 
+            # resort to "original" size by default
             if size not in versions and size != "original":
                 if force_size:
                     filename = photo.filename.encode(
@@ -427,21 +462,19 @@ def main(
             download_path = local_download_path(
                 photo, download_size, download_dir)
 
-            file_exists = os.path.isfile(download_path)
-            if not file_exists and download_size == "original":
-                # Deprecation - We used to download files like IMG_1234-original.jpg,
-                # so we need to check for these.
-                # Now we match the behavior of iCloud for Windows: IMG_1234.jpg
-                original_download_path = ("-%s." % size).join(
-                    download_path.rsplit(".", 1)
-                )
-                file_exists = os.path.isfile(original_download_path)
 
-            if file_exists:
+            ### process downloading our photo
+            already_processed = statemgr.processed(
+                download_dir=download_dir,
+                download_size=download_size,
+                photo=photo,
+            )
+
+            if already_processed:
                 if until_found is not None:
                     consecutive_files_found += 1
                 logger.set_tqdm_description(
-                    "%s already exists." % truncate_middle(download_path, 96)
+                    "%s already processed." % truncate_middle(download_path, 96)
                 )
             else:
                 if until_found is not None:
@@ -454,6 +487,9 @@ def main(
                     logger.set_tqdm_description(
                         "Downloading %s" %
                         truncated_path)
+
+                    # update photo state to STARTED
+                    statemgr.update(photo=photo, download_size=download_size, state=state_lib.STATE_ENUM["STARTED"])
 
                     download_result = download.download_media(
                         icloud, photo, download_path, download_size
@@ -478,35 +514,42 @@ def main(
                             timestamp = time.mktime(created_date.timetuple())
                             os.utime(download_path, (timestamp, timestamp))
 
-            # Also download the live photo if present
+                    # update photo state to FINISHED
+                    if download_result:
+                        statemgr.update(photo=photo, download_size=download_size, state=state_lib.STATE_ENUM["FINISHED"])
+
+
+            ### process downloading videos for any live photos
             if not skip_live_photos:
+                # live photo video size
                 lp_size = live_photo_size + "Video"
                 if lp_size in photo.versions:
-                    version = photo.versions[lp_size]
-                    filename = version["filename"]
-                    if live_photo_size != "original":
-                        # Add size to filename if not original
-                        filename = filename.replace(
-                            ".MOV", "-%s.MOV" %
-                            live_photo_size)
-                    lp_download_path = os.path.join(download_dir, filename)
+                    lp_download_path = local_download_path_lp(media=photo, lp_size=lp_size, download_dir=download_dir)
 
                     if only_print_filenames:
                         print(lp_download_path)
                     else:
-                        if os.path.isfile(lp_download_path):
+                        # skip if we've already processed this lp's video
+                        if statemgr.processed(photo=photo, download_size=lp_size, download_dir=download_dir):
                             logger.set_tqdm_description(
-                                "%s already exists."
+                                "%s already processed."
                                 % truncate_middle(lp_download_path, 96)
                             )
                             break
 
+                        # update photo state to STARTED
+                        statemgr.update(photo=photo, download_size=lp_size, state=state_lib.STATE_ENUM["STARTED"])
+
                         truncated_path = truncate_middle(lp_download_path, 96)
                         logger.set_tqdm_description(
                             "Downloading %s" % truncated_path)
-                        download.download_media(
+                        download_result = download.download_media(
                             icloud, photo, lp_download_path, lp_size
                         )
+
+                        # update photo state to FINISHED
+                        if download_result:
+                            statemgr.update(photo=photo, download_size=lp_size, state=state_lib.STATE_ENUM["FINISHED"])
 
             break
 

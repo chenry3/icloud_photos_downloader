@@ -74,11 +74,95 @@ class DownloadPhotoTestCase(TestCase):
                 self._caplog.text,
             )
             self.assertIn(
-                "INFO     tests/fixtures/Photos/2018/07/30/IMG_7408.JPG already exists.",
+                "INFO     tests/fixtures/Photos/2018/07/30/IMG_7408.JPG already processed.",
                 self._caplog.text,
             )
             self.assertIn(
-                "INFO     tests/fixtures/Photos/2018/07/30/IMG_7407.JPG already exists.",
+                "INFO     tests/fixtures/Photos/2018/07/30/IMG_7408.JPG already processed.",
+                self._caplog.text,
+            )
+            self.assertIn(
+                "INFO     Skipping IMG_7405.MOV, only downloading photos.",
+                self._caplog.text,
+            )
+            self.assertIn(
+                "INFO     Skipping IMG_7404.MOV, only downloading photos.",
+                self._caplog.text,
+            )
+            self.assertIn(
+                "INFO     All photos have been downloaded!", self._caplog.text
+            )
+
+            # Check that file was downloaded
+            self.assertTrue(
+                os.path.exists("tests/fixtures/Photos/2018/07/31/IMG_7409.JPG"))
+            # Check that mtime was updated to the photo creation date
+            photo_mtime = os.path.getmtime("tests/fixtures/Photos/2018/07/31/IMG_7409.JPG")
+            photo_modified_time = datetime.datetime.utcfromtimestamp(photo_mtime)
+            self.assertEquals(
+                "2018-07-31 07:22:24",
+                photo_modified_time.strftime('%Y-%m-%d %H:%M:%S'))
+
+            assert result.exit_code == 0
+
+    @mock.patch("icloudpd.base.state_lib.SQLiteMediaManager")
+    def test_download_and_skip_existing_photos_sqlite(self, mock_sqlite):
+        # first media item is not already processed, rest are
+        mock_sqlite().processed.side_effect = [False, True, True]
+        if os.path.exists("tests/fixtures/Photos"):
+            shutil.rmtree("tests/fixtures/Photos")
+        os.makedirs("tests/fixtures/Photos")
+
+        os.makedirs("tests/fixtures/Photos/2018/07/30/")
+        open("tests/fixtures/Photos/2018/07/30/IMG_7408.JPG", "a").close()
+        open("tests/fixtures/Photos/2018/07/30/IMG_7407.JPG", "a").close()
+
+        with vcr.use_cassette("tests/vcr_cassettes/listing_photos.yml"):
+            # Pass fixed client ID via environment variable
+            os.environ["CLIENT_ID"] = "DE309E26-942E-11E8-92F5-14109FE0B321"
+            runner = CliRunner()
+            result = runner.invoke(
+                main,
+                [
+                    "--username",
+                    "jdoe@gmail.com",
+                    "--password",
+                    "password1",
+                    "--recent",
+                    "5",
+                    "--skip-videos",
+                    "--skip-live-photos",
+                    "--set-exif-datetime",
+                    "--no-progress-bar",
+                    "-d",
+                    "tests/fixtures/Photos",
+                    "--state-store",
+                    "sqlite",
+                    "--state-path",
+                    "tests/fixtures/test.sqlite3"
+                ],
+            )
+            print_result_exception(result)
+
+            self.assertIn("DEBUG    Looking up all photos from album All Photos...", self._caplog.text)
+            self.assertIn(
+                "INFO     Downloading 5 original photos to tests/fixtures/Photos/ ...",
+                self._caplog.text,
+            )
+            self.assertIn(
+                "INFO     Downloading tests/fixtures/Photos/2018/07/31/IMG_7409.JPG",
+                self._caplog.text,
+            )
+            self.assertNotIn(
+                "IMG_7409.MOV",
+                self._caplog.text,
+            )
+            self.assertIn(
+                "INFO     tests/fixtures/Photos/2018/07/30/IMG_7408.JPG already processed.",
+                self._caplog.text,
+            )
+            self.assertIn(
+                "INFO     tests/fixtures/Photos/2018/07/30/IMG_7408.JPG already processed.",
                 self._caplog.text,
             )
             self.assertIn(
@@ -264,11 +348,67 @@ class DownloadPhotoTestCase(TestCase):
                 self._caplog.text,
             )
             self.assertIn(
-                "INFO     tests/fixtures/Photos/2018/07/31/IMG_7409.JPG already exists.",
+                "INFO     tests/fixtures/Photos/2018/07/31/IMG_7409.JPG already processed.",
                 self._caplog.text,
             )
             self.assertIn(
-                "INFO     tests/fixtures/Photos/2018/07/31/IMG_7409.MOV already exists.",
+                "INFO     tests/fixtures/Photos/2018/07/31/IMG_7409.MOV already processed.",
+                self._caplog.text,
+            )
+            self.assertIn(
+                "INFO     All photos have been downloaded!", self._caplog.text
+            )
+            assert result.exit_code == 0
+
+    @mock.patch("icloudpd.base.state_lib.SQLiteMediaManager")
+    def test_skip_existing_downloads_sqlite(self, mock_sqlite):
+        # all media inqueries return as already processed
+        mock_sqlite().processed.return_value = True
+        if os.path.exists("tests/fixtures/Photos"):
+            shutil.rmtree("tests/fixtures/Photos")
+        os.makedirs("tests/fixtures/Photos/2018/07/31/")
+        open("tests/fixtures/Photos/2018/07/31/IMG_7409.JPG", "a").close()
+        open("tests/fixtures/Photos/2018/07/31/IMG_7409.MOV", "a").close()
+
+        with vcr.use_cassette("tests/vcr_cassettes/listing_photos.yml"):
+            # Pass fixed client ID via environment variable
+            os.environ["CLIENT_ID"] = "DE309E26-942E-11E8-92F5-14109FE0B321"
+            runner = CliRunner()
+            result = runner.invoke(
+                main,
+                [
+                    "--username",
+                    "jdoe@gmail.com",
+                    "--password",
+                    "password1",
+                    "--recent",
+                    "1",
+                    # '--skip-videos',
+                    # "--skip-live-photos",
+                    "--no-progress-bar",
+                    "-d",
+                    "tests/fixtures/Photos",
+                    "--state-store",
+                    "sqlite",
+                    "--state-path",
+                    "tests/fixtures/test.sqlite3"
+                ],
+            )
+            print_result_exception(result)
+
+            self.assertIn(
+                "DEBUG    Looking up all photos and videos from album All Photos...", self._caplog.text
+            )
+            self.assertIn(
+                "INFO     Downloading the first original photo or video to tests/fixtures/Photos/ ...",
+                self._caplog.text,
+            )
+            self.assertIn(
+                "INFO     tests/fixtures/Photos/2018/07/31/IMG_7409.JPG already processed.",
+                self._caplog.text,
+            )
+            self.assertIn(
+                "INFO     tests/fixtures/Photos/2018/07/31/IMG_7409.MOV already processed.",
                 self._caplog.text,
             )
             self.assertIn(
@@ -352,7 +492,7 @@ class DownloadPhotoTestCase(TestCase):
                 )
 
                 for f in files_to_skip:
-                    expected_message = "INFO     %s/%s already exists." % (base_dir, f[0])
+                    expected_message = "INFO     %s/%s already processed." % (base_dir, f[0])
                     self.assertIn(expected_message, self._caplog.text)
 
                 self.assertIn(

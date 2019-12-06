@@ -1,5 +1,6 @@
 """Handles file downloads with retries and error handling"""
 
+import hashlib
 import os
 import socket
 import time
@@ -29,7 +30,7 @@ def update_mtime(photo, download_path):
         os.utime(download_path, (ctime, ctime))
 
 
-def download_media(icloud, photo, download_path, size):
+def download_media(icloud, photo, download_path, size, hash_type="sha1"):
     """Download the photo to path, with retries and error handling"""
     logger = setup_logger()
 
@@ -37,12 +38,14 @@ def download_media(icloud, photo, download_path, size):
         try:
             photo_response = photo.download(size)
             if photo_response:
+                file_hash = getattr(hashlib, hash_type)()
                 with open(download_path, "wb") as file_obj:
                     for chunk in photo_response.iter_content(chunk_size=1024):
                         if chunk:
                             file_obj.write(chunk)
+                            file_hash.update(chunk)
                 update_mtime(photo, download_path)
-                return True
+                return file_hash.hexdigest()
 
             logger.tqdm_write(
                 "Could not find URL to download %s for size %s!"

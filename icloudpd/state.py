@@ -90,6 +90,8 @@ class SQLiteMediaManager(BaseDBMediaManager):
     SCHEMA = ("""CREATE TABLE IF NOT EXISTS `{table}` ("""
              """`id` varchar(28) NOT NULL,"""
              """`size` varchar(30) NOT NULL,"""
+             """`hash` varchar(40),"""
+             """`filename` varchar(40),"""
              """`state` integer NOT NULL);""")
     # sqlite string substitution character is "?"
     SUB_SYMBOL = """?"""
@@ -111,7 +113,7 @@ class SQLiteMediaManager(BaseDBMediaManager):
         else:
             return False
 
-    def update(self, photo, download_size, state):
+    def update(self, photo, download_size, state, hash=None):
         """
         update a row in our sqlite state store
         :param photo: pyicloud_ipd.services.photos.PhotoAsset obj
@@ -129,9 +131,9 @@ class SQLiteMediaManager(BaseDBMediaManager):
         query_params = (photo.id, download_size)
         self.db.trans_query(query, query_params)
 
-        query = "INSERT INTO {0} (id, size, state) VALUES ({1}, {1}, {1})"
+        query = "INSERT INTO {0} (id, filename, hash, size, state) VALUES ({1}, {1}, {1}, {1}, {1})"
         query = query.format(self.TABLE, self.SUB_SYMBOL)
-        query_params = (photo.id, download_size, state)
+        query_params = (photo.id, photo.filename, hash, download_size, state)
         self.db.trans_query(query, query_params)
 
     def get_state(self, photo, download_size):

@@ -489,7 +489,11 @@ def main(
                         truncated_path)
 
                     # update photo state to STARTED
-                    statemgr.update(photo=photo, download_size=download_size, state=state_lib.STATE_ENUM["STARTED"])
+                    statemgr.update(
+                        download_size=download_size,
+                        photo=photo,
+                        state=state_lib.STATE_ENUM["STARTED"]
+                    )
 
                     download_result = download.download_media(
                         icloud, photo, download_path, download_size
@@ -516,7 +520,12 @@ def main(
 
                     # update photo state to FINISHED
                     if download_result:
-                        statemgr.update(photo=photo, download_size=download_size, state=state_lib.STATE_ENUM["FINISHED"])
+                        statemgr.update(
+                            download_size=download_size,
+                            hash=download_result,
+                            photo=photo,
+                            state=state_lib.STATE_ENUM["FINISHED"]
+                        )
 
 
             ### process downloading videos for any live photos
@@ -524,13 +533,21 @@ def main(
                 # live photo video size
                 lp_size = live_photo_size + "Video"
                 if lp_size in photo.versions:
-                    lp_download_path = local_download_path_lp(media=photo, lp_size=lp_size, download_dir=download_dir)
+                    lp_download_path = local_download_path_lp(
+                        media=photo,
+                        lp_size=lp_size,
+                        download_dir=download_dir
+                    )
 
                     if only_print_filenames:
                         print(lp_download_path)
                     else:
                         # skip if we've already processed this lp's video
-                        if statemgr.processed(photo=photo, download_size=lp_size, download_dir=download_dir):
+                        if statemgr.processed(
+                            download_size=lp_size,
+                            download_dir=download_dir,
+                            photo=photo
+                        ):
                             logger.set_tqdm_description(
                                 "%s already processed."
                                 % truncate_middle(lp_download_path, 96)
@@ -538,7 +555,11 @@ def main(
                             break
 
                         # update photo state to STARTED
-                        statemgr.update(photo=photo, download_size=lp_size, state=state_lib.STATE_ENUM["STARTED"])
+                        statemgr.update(
+                            download_size=lp_size,
+                            photo=photo,
+                            state=state_lib.STATE_ENUM["STARTED"]
+                        )
 
                         truncated_path = truncate_middle(lp_download_path, 96)
                         logger.set_tqdm_description(
@@ -549,7 +570,12 @@ def main(
 
                         # update photo state to FINISHED
                         if download_result:
-                            statemgr.update(photo=photo, download_size=lp_size, state=state_lib.STATE_ENUM["FINISHED"])
+                            statemgr.update(
+                                download_size=lp_size,
+                                hash=download_result,
+                                photo=photo,
+                                state=state_lib.STATE_ENUM["FINISHED"]
+                            )
 
             break
 

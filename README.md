@@ -1,3 +1,7 @@
+# FORKED
+
+I forked this in order to add support other forms of state management than just files existing.  This stubs in support for other forms of state management and implements sqlite.
+
 # CURRENTLY UNMAINTAINED
 
 I hope this tool is useful for you! Unfortunately I don't use it anymore, and I don't want to keep working on it. Please let me know if you want to help maintain it and respond to the GitHub issues and pull requests. Thanks!
@@ -53,7 +57,8 @@ pip install icloudpd
                [--notification-script PATH]
                [--log-level (debug|info|error)]
                [--no-progress-bar]
-
+               [--state-path <state_path>]
+               [--state-store <state_backedn>]
     Options:
         --username <username>           Your iCloud username or email address
         --password <password>           Your iCloud password (default: use PyiCloud
@@ -115,6 +120,12 @@ pip install icloudpd
                                         prints log messages on separate lines
                                         (Progress bar is disabled by default if
                                         there is no tty attached)
+        --state-store <state_backend>   Media state backend to use (defaults to
+                                        files).
+                                        files: photo exists on filesystem
+                                        json: flat json file
+                                        sqlite: sqlite db
+        --state-path <state_path>       Path to state store (if applicable)
         --version                       Show the version and exit.
         -h, --help                      Show this message and exit.
 
@@ -160,6 +171,20 @@ brew install python
 sudo apt-get update
 sudo apt-get install -y python
 ```
+
+## State
+By default the `files` state is used and relys on the destination download directory to contain files.  If you plan on moving, renaming, or changing the folder structure of your download directory you have two options:
+
+- Use the use the `--auto-delete` option if you don't want the photos to persist in icloud
+- Use the sqlite state option which uses a sqlite db to manage processed state instead of local files.
+
+Example:
+
+    $ icloudpd ./Photos \
+        --username testuser@example.com \
+        --password pass1234 \
+        --state-store sqlite
+        --state-path /path/to/permanent/sqlite/db.sqlite3
 
 ## Authentication
 
